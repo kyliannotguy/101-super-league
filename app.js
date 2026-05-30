@@ -2,6 +2,9 @@ const STORAGE_KEY = "oneZeroOneLeagueState.v2";
 const AUTH_KEY = "oneZeroOneLeagueAdmin.v2";
 const TAB_KEY = "oneZeroOneLeagueTab.v2";
 const DEFAULT_ADMIN_PASSWORD_HASH = "22b06d157c7eeb10c0d52ca2f297cf8ade84d9675bbc8199a1b284aa8113f772";
+const SUPABASE_URL = "https://wfezklbuehsldvxlylzv.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_w9baPO5oBw8_EVISvXSr9w_pdMTY1bl";
+const REMOTE_STATE_ENDPOINT = `${SUPABASE_URL}/rest/v1/league_state`;
 
 const DEFAULT_SEASON_ID = "season-26-27-1";
 
@@ -14,6 +17,12 @@ const TEAM_PRESETS = [
 ];
 
 const state = loadState();
+const remote = {
+  status: "connecting",
+  message: "正在连接线上数据库",
+  lastSavedAt: "",
+  saveTimer: null,
+};
 const ui = {
   tab: localStorage.getItem(TAB_KEY) || "overview",
   editingPlayerId: null,
@@ -27,6 +36,7 @@ document.addEventListener("submit", handleSubmit);
 document.addEventListener("change", handleChange);
 
 render();
+hydrateRemoteState();
 
 function defaultState() {
   const teams = TEAM_PRESETS.map((team, index) => ({
@@ -115,8 +125,86 @@ function normalizeState(data) {
   return next;
 }
 
-function saveState() {
+function saveState(options = {}) {
+  const { syncRemote = true } = options;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  if (syncRemote) queueRemoteSave();
+}
+
+async function hydrateRemoteState() {
+  try {
+    const response = await fetch(`${REMOTE_STATE_ENDPOINT}?id=eq.main&select=data`, {
+      headers: supabaseHeaders(),
+    });
+    if (!response.ok) throw new Error(`读取失败：${response.status}`);
+
+    const rows = await response.json();
+    const remoteData = rows?.[0]?.data;
+    if (remoteData && Object.keys(remoteData).length) {
+      replaceState(remoteData);
+      saveState({ syncRemote: false });
+      remote.status = "connected";
+      remote.message = "线上数据已载入";
+    } else {
+      remote.status = "saving";
+      remote.message = "正在初始化线上数据";
+      await saveRemoteStateNow(false);
+    }
+  } catch (error) {
+    remote.status = "error";
+    remote.message = "线上数据库未连接，正在使用本地缓存";
+    console.warn(error);
+  }
+  render();
+}
+
+function replaceState(nextState) {
+  const normalized = normalizeState(nextState);
+  Object.keys(state).forEach((key) => delete state[key]);
+  Object.assign(state, normalized);
+}
+
+function queueRemoteSave() {
+  window.clearTimeout(remote.saveTimer);
+  remote.status = "saving";
+  remote.message = "正在保存到线上";
+  remote.saveTimer = window.setTimeout(() => {
+    saveRemoteStateNow(true);
+  }, 350);
+}
+
+async function saveRemoteStateNow(shouldRender = true) {
+  try {
+    const response = await fetch(REMOTE_STATE_ENDPOINT, {
+      method: "POST",
+      headers: {
+        ...supabaseHeaders(),
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates,return=minimal",
+      },
+      body: JSON.stringify({
+        id: "main",
+        data: state,
+        updated_at: nowIso(),
+      }),
+    });
+    if (!response.ok) throw new Error(`保存失败：${response.status}`);
+    remote.status = "connected";
+    remote.lastSavedAt = nowIso();
+    remote.message = "线上数据已同步";
+  } catch (error) {
+    remote.status = "error";
+    remote.message = "线上保存失败，已保留本地缓存";
+    console.warn(error);
+  }
+  if (shouldRender) render();
+}
+
+function supabaseHeaders() {
+  return {
+    apikey: SUPABASE_PUBLISHABLE_KEY,
+    Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+  };
 }
 
 function render() {
@@ -134,6 +222,7 @@ function render() {
           </div>
           <div class="top-actions">
             <span class="mode-pill ${admin ? "admin" : ""}">${admin ? "管理员模式" : "公开展示模式"}</span>
+            ${renderSyncPill()}
             ${admin ? renderAdminTopActions() : renderLoginForm()}
           </div>
         </div>
@@ -156,6 +245,18 @@ function renderAdminTopActions() {
     <button class="btn ghost small" data-action="export-data">导出数据</button>
     <button class="btn small" data-action="logout">退出管理</button>
   `;
+}
+
+function renderSyncPill() {
+  const statusClass = remote.status === "connected" ? "admin" : remote.status === "error" ? "warn" : "";
+  return `<span class="mode-pill ${statusClass}" title="${escAttr(remote.message)}">${esc(syncStatusLabel())}</span>`;
+}
+
+function syncStatusLabel() {
+  if (remote.status === "connected") return "线上已同步";
+  if (remote.status === "saving") return "线上保存中";
+  if (remote.status === "error") return "线上未连接";
+  return "线上连接中";
 }
 
 function renderLoginForm() {
@@ -1035,7 +1136,7 @@ function renderSeasonAdmin(stats) {
           </div>
         </form>
         <div class="notice" style="margin-top:12px">
-          当前是本地静态初版，线上正式使用建议改成后端登录保护。
+          当前是轻量线上同步版，适合校内联赛快速使用；未来可再升级成服务端权限保护。
         </div>
       </div>
       <div class="panel admin-panel">

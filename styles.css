@@ -100,6 +100,12 @@ button {
   border-color: #b9e4c6;
 }
 
+.mode-pill.warn {
+  color: #8a4c00;
+  background: #fff3df;
+  border-color: #e4bd7c;
+}
+
 .container {
   max-width: 1280px;
   margin: 0 auto;
