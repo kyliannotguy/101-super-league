@@ -81,6 +81,14 @@ button {
   justify-content: flex-end;
 }
 
+.login-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .mode-pill {
   display: inline-flex;
   align-items: center;
@@ -618,6 +626,16 @@ textarea {
 
   .top-actions {
     justify-content: flex-start;
+  }
+
+  .login-form {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .login-form input {
+    min-width: 0;
+    flex: 1 1 150px;
   }
 
   .container {

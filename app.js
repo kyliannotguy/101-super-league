@@ -26,6 +26,7 @@ const remote = {
 const ui = {
   tab: localStorage.getItem(TAB_KEY) || "overview",
   editingPlayerId: null,
+  loginOpen: false,
   toast: "",
 };
 
@@ -260,11 +261,16 @@ function syncStatusLabel() {
 }
 
 function renderLoginForm() {
+  if (!ui.loginOpen) {
+    return `<button class="btn small" type="button" data-action="toggle-login">管理员登录</button>`;
+  }
+
   return `
-    <form id="loginForm" class="top-actions">
+    <form id="loginForm" class="login-form">
       <input name="username" autocomplete="username" placeholder="管理员账号" aria-label="管理员账号" />
       <input name="password" type="password" autocomplete="current-password" placeholder="管理员密码" aria-label="管理员密码" />
       <button class="btn primary" type="submit">进入管理</button>
+      <button class="btn ghost" type="button" data-action="toggle-login">收起</button>
     </form>
   `;
 }
@@ -1241,6 +1247,12 @@ function handleClick(event) {
     return;
   }
 
+  if (action === "toggle-login") {
+    ui.loginOpen = !ui.loginOpen;
+    render();
+    return;
+  }
+
   if (!isAdmin()) {
     toast("请先进入管理员模式");
     return;
@@ -1342,6 +1354,7 @@ async function login(form) {
   const password = String(data.get("password") || "");
   if (username === state.adminName && (await verifyPassword(password))) {
     localStorage.setItem(AUTH_KEY, "true");
+    ui.loginOpen = false;
     if (state.adminPassword) {
       state.adminPasswordHash = await digestPassword(password);
       delete state.adminPassword;
@@ -1349,6 +1362,7 @@ async function login(form) {
     }
     toast("已进入管理员模式");
   } else {
+    ui.loginOpen = true;
     toast("管理员账号或密码不正确");
   }
 }
