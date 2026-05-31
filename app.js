@@ -901,17 +901,16 @@ function renderMatchList(matches, showAll, limit) {
 
 function renderTransfersView(stats) {
   return `
-    ${
-      isAdmin()
-        ? `<section class="grid cols-2 transfer-tool-grid">${renderTransferAdmin()}${renderTransferRuleGuide()}</section>`
-        : renderTransferRuleGuide()
-    }
     <section class="panel">
       <div class="section-title">
-        <h2>转会、解约金与租借</h2>
+        <h2>近期转会、解约金与租借</h2>
         <span class="hint">租借固定扣 8 丸，出租队收入 4 丸，借入队踢完一场后自动归还</span>
       </div>
       ${renderTransferList(stats.transfers, true)}
+    </section>
+    <section class="grid cols-2 transfer-tool-grid">
+      ${renderTransferRuleGuide()}
+      ${isAdmin() ? renderTransferAdmin() : ""}
     </section>
   `;
 }
