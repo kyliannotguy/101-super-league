@@ -522,6 +522,51 @@ textarea {
   font-size: 14px;
 }
 
+.transfer-tool-grid {
+  align-items: start;
+  margin-bottom: 14px;
+}
+
+.rule-guide {
+  border-left: 4px solid var(--warn);
+}
+
+.rule-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.rule-block {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+  padding: 11px;
+}
+
+.rule-title {
+  font-weight: 800;
+  margin-bottom: 7px;
+}
+
+.rule-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-top: 1px solid #e8edf4;
+  font-size: 14px;
+}
+
+.rule-line span {
+  color: var(--muted);
+}
+
+.rule-block p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .toast {
   position: fixed;
   right: 18px;

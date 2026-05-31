@@ -901,7 +901,11 @@ function renderMatchList(matches, showAll, limit) {
 
 function renderTransfersView(stats) {
   return `
-    ${isAdmin() ? renderTransferAdmin() : ""}
+    ${
+      isAdmin()
+        ? `<section class="grid cols-2 transfer-tool-grid">${renderTransferAdmin()}${renderTransferRuleGuide()}</section>`
+        : renderTransferRuleGuide()
+    }
     <section class="panel">
       <div class="section-title">
         <h2>转会、解约金与租借</h2>
@@ -909,6 +913,42 @@ function renderTransfersView(stats) {
       </div>
       ${renderTransferList(stats.transfers, true)}
     </section>
+  `;
+}
+
+function renderTransferRuleGuide() {
+  return `
+    <aside class="panel rule-guide">
+      <div class="section-title">
+        <h2>转会规则速查</h2>
+        <span class="hint">来自规则策划书，租借按现行调整</span>
+      </div>
+      <div class="rule-grid">
+        <div class="rule-block">
+          <div class="rule-title">正常转会</div>
+          <div class="rule-line"><span>普通档</span><strong>≤ 80-110 丸</strong></div>
+          <div class="rule-line"><span>顶星档</span><strong>≤ 150-200 丸</strong></div>
+          <p>不限制下限；需要转出队、转入队和球员三方同意。</p>
+        </div>
+        <div class="rule-block">
+          <div class="rule-title">解约金</div>
+          <div class="rule-line"><span>基础档</span><strong>150-160 丸</strong></div>
+          <div class="rule-line"><span>顶星档</span><strong>245-260 丸</strong></div>
+          <p>支付解约金后，在球员同意的情况下可直接带走，不需要与原球队谈判。</p>
+        </div>
+        <div class="rule-block">
+          <div class="rule-title">临时租借</div>
+          <div class="rule-line"><span>借入队支出</span><strong>8 丸</strong></div>
+          <div class="rule-line"><span>出租队收入</span><strong>4 丸</strong></div>
+          <p>剩余 4 丸直接扣除；租借只限一场，借入队踢完一场后自动归还。</p>
+        </div>
+        <div class="rule-block">
+          <div class="rule-title">窗口与人数</div>
+          <p>转会窗：1月1日-2月15日、8月1日-10月1日。第一年夏窗为6月1日-10月1日。</p>
+          <p>正常转会窗下，球队剩余球员不得低于 8 人；每队注册人数不得超过 12 人。</p>
+        </div>
+      </div>
+    </aside>
   `;
 }
 
