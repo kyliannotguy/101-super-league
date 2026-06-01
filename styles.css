@@ -530,6 +530,33 @@ textarea {
   font-size: 14px;
 }
 
+.import-panel {
+  margin-bottom: 14px;
+}
+
+.import-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.7fr) 1fr;
+  gap: 12px;
+  align-items: end;
+}
+
+.import-example {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.import-example span {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fbfcfe;
+}
+
 .transfer-tool-grid {
   align-items: start;
   margin-bottom: 14px;
@@ -646,6 +673,7 @@ textarea {
   .grid.cols-3,
   .grid.cols-4,
   .roster-grid,
+  .import-layout,
   .form-grid,
   .form-grid.two,
   .form-grid.three {

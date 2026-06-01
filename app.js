@@ -16,6 +16,15 @@ const TEAM_PRESETS = [
   { id: "team-chasing", name: "chasing", color: "#f08a24" },
 ];
 
+const ROSTER_IMPORT_COLUMNS = {
+  name: ["姓名", "球员", "球员姓名", "名字", "name", "player", "playername"],
+  team: ["球队", "所属球队", "归属球队", "队伍", "team", "club"],
+  position: ["位置", "场上位置", "position", "pos"],
+  goalkeeper: ["门将", "守门员", "gk", "goalkeeper", "keeper"],
+  tier: ["档位", "身份", "球员档位", "级别", "tier", "level", "class"],
+  captain: ["队长", "是否队长", "captain"],
+};
+
 const state = loadState();
 const remote = {
   status: "connecting",
@@ -566,6 +575,7 @@ function renderTeamLedger(summary, entries) {
 function renderTeamsView(stats) {
   return `
     ${isAdmin() ? renderTeamSettingsAdmin() : ""}
+    ${isAdmin() ? renderRosterImportAdmin() : ""}
     ${isAdmin() ? renderPlayerAdmin() : ""}
     <section class="roster-grid">
       ${state.teams.filter((team) => team.active).map((team) => renderTeamCard(team, stats.playersByTeam[team.id] || [])).join("")}
@@ -668,6 +678,31 @@ function renderPlayerAdmin() {
       </form>
       <div style="margin-top:14px">
         ${renderPlayersTable()}
+      </div>
+    </section>
+  `;
+}
+
+function renderRosterImportAdmin() {
+  return `
+    <section class="panel admin-panel import-panel">
+      <div class="section-title">
+        <h2>导入球员名单</h2>
+        <span class="hint">支持 Excel / CSV，重复姓名会自动更新</span>
+      </div>
+      <div class="import-layout">
+        <label class="field">
+          <span>选择名单文件</span>
+          <input id="rosterImportInput" type="file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" />
+        </label>
+        <div class="notice">
+          表头可用：姓名、球队、位置、档位、队长。球队请填 101fc、101竞技、格调、poi、chasing；如果工作表名称就是队名，也可以不填球队列。
+        </div>
+      </div>
+      <div class="import-example">
+        <strong>示例：</strong>
+        <span>姓名 | 球队 | 位置 | 档位 | 队长</span>
+        <span>张三 | 101fc | GK | 顶星档 | 否</span>
       </div>
     </section>
   `;
@@ -1324,6 +1359,13 @@ async function handleSubmit(event) {
 function handleChange(event) {
   if (event.target?.id === "importDataInput") {
     importData(event.target.files?.[0]);
+    event.target.value = "";
+    return;
+  }
+
+  if (event.target?.id === "rosterImportInput") {
+    importRosterFile(event.target.files?.[0]);
+    event.target.value = "";
     return;
   }
 
@@ -1786,6 +1828,174 @@ function importData(file) {
     }
   };
   reader.readAsText(file);
+}
+
+async function importRosterFile(file) {
+  if (!file || !isAdmin()) return;
+  if (!window.XLSX) return toast("Excel 导入组件未加载，请刷新页面后重试");
+
+  try {
+    const buffer = await file.arrayBuffer();
+    const workbook = window.XLSX.read(buffer, { type: "array" });
+    const rows = workbook.SheetNames.flatMap((sheetName) => {
+      const sheet = workbook.Sheets[sheetName];
+      return window.XLSX.utils.sheet_to_json(sheet, { defval: "" }).map((row) => ({
+        ...row,
+        __sheetName: sheetName,
+      }));
+    });
+    if (!rows.length) return toast("名单为空，请确认第一行是表头");
+
+    const result = importRosterRows(rows);
+    if (!result.added && !result.updated) {
+      return toast(`没有导入球员，已跳过 ${result.skipped} 行`);
+    }
+
+    const detail = [
+      `新增 ${result.added}`,
+      `更新 ${result.updated}`,
+      result.skipped ? `跳过 ${result.skipped}` : "",
+      result.unknownTeams.length ? `未知球队：${result.unknownTeams.join("、")}` : "",
+    ]
+      .filter(Boolean)
+      .join("；");
+
+    logAction("导入球员名单", file.name, detail);
+    saveState();
+    toast(`球员名单已导入：${detail}`);
+  } catch (error) {
+    console.warn(error);
+    toast("导入失败，请确认 Excel/CSV 文件格式");
+  }
+}
+
+function importRosterRows(rows) {
+  const result = {
+    added: 0,
+    updated: 0,
+    skipped: 0,
+    unknownTeams: [],
+  };
+  const unknownTeamSet = new Set();
+
+  for (const row of rows) {
+    const name = pickRosterValue(row, ROSTER_IMPORT_COLUMNS.name).trim();
+    if (!name) {
+      result.skipped += 1;
+      continue;
+    }
+
+    const teamText = pickRosterValue(row, ROSTER_IMPORT_COLUMNS.team).trim();
+    const sheetTeamId = parseRosterTeamId(row.__sheetName);
+    let teamId = teamText ? parseRosterTeamId(teamText) : sheetTeamId;
+    if (!teamText && !teamId) teamId = "";
+    if (teamText && !teamId && !isFreeTeamText(teamText)) {
+      unknownTeamSet.add(teamText);
+      result.skipped += 1;
+      continue;
+    }
+
+    const payload = {
+      name,
+      teamId,
+      position: parseRosterPosition(
+        pickRosterValue(row, ROSTER_IMPORT_COLUMNS.position),
+        pickRosterValue(row, ROSTER_IMPORT_COLUMNS.goalkeeper),
+      ),
+      tier: parseRosterTier(pickRosterValue(row, ROSTER_IMPORT_COLUMNS.tier)),
+      captain: parseRosterCaptain(pickRosterValue(row, ROSTER_IMPORT_COLUMNS.captain)),
+    };
+
+    const existing = findPlayerByName(name);
+    if (existing) {
+      Object.assign(existing, payload, { active: true, updatedAt: nowIso() });
+      result.updated += 1;
+    } else {
+      state.players.push({
+        id: makeId("player"),
+        active: true,
+        createdAt: nowIso(),
+        ...payload,
+      });
+      result.added += 1;
+    }
+  }
+
+  result.unknownTeams = [...unknownTeamSet];
+  return result;
+}
+
+function pickRosterValue(row, candidates) {
+  const entries = Object.entries(row);
+  for (const candidate of candidates) {
+    const normalizedCandidate = normalizeRosterKey(candidate);
+    const match = entries.find(([key]) => normalizeRosterKey(key) === normalizedCandidate);
+    if (match) return String(match[1] ?? "");
+  }
+  return "";
+}
+
+function normalizeRosterKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[（）()_\-]/g, "");
+}
+
+function normalizeRosterText(value) {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g, "");
+}
+
+function parseRosterTeamId(value) {
+  const text = normalizeRosterText(value);
+  if (!text || isFreeTeamText(text)) return "";
+  const aliases = {
+    "101fc": "team-101fc",
+    "101竞技": "team-101jj",
+    "101jj": "team-101jj",
+    "竞技": "team-101jj",
+    "格调": "team-gediao",
+    gediao: "team-gediao",
+    poi: "team-poi",
+    chasing: "team-chasing",
+  };
+  const team = state.teams.find((item) => normalizeRosterText(item.name) === text || normalizeRosterText(item.id) === text);
+  return team?.id || aliases[text] || "";
+}
+
+function isFreeTeamText(value) {
+  const text = normalizeRosterText(value);
+  return ["自由", "自由球员", "无", "未分配", "free", "none", "na", "n/a"].includes(text);
+}
+
+function parseRosterPosition(positionValue, goalkeeperValue) {
+  const goalkeeperText = normalizeRosterText(goalkeeperValue);
+  const positionText = normalizeRosterText(positionValue);
+  const goalkeeperTexts = ["gk", "门将", "守门员", "goalkeeper", "keeper"];
+  if (isTruthyRosterValue(goalkeeperText) || goalkeeperTexts.includes(goalkeeperText) || goalkeeperTexts.includes(positionText)) return "GK";
+  if (!positionText) return "unknown";
+  if (["未定", "未知", "unknown", "na", "n/a"].includes(positionText)) return "unknown";
+  return "field";
+}
+
+function parseRosterTier(value) {
+  const text = normalizeRosterText(value);
+  if (!text) return "ordinary";
+  if (["顶星", "顶星档", "top", "star", "明星", "明星档"].includes(text)) return "top";
+  if (["基础", "基础档", "base"].includes(text)) return "base";
+  if (["自由", "自由球员", "free"].includes(text)) return "free";
+  if (["租借", "租借球员", "loan"].includes(text)) return "loan";
+  return "ordinary";
+}
+
+function parseRosterCaptain(value) {
+  return isTruthyRosterValue(value);
+}
+
+function isTruthyRosterValue(value) {
+  const text = normalizeRosterText(value);
+  return ["是", "对", "真", "yes", "y", "true", "1", "队长", "captain", "c"].includes(text);
 }
 
 function collectStats() {
