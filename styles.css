@@ -557,6 +557,28 @@ textarea {
   background: #fbfcfe;
 }
 
+.goal-inputs {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.goal-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 96px;
+  gap: 8px;
+  align-items: center;
+}
+
+.goal-row.goal-head {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .transfer-tool-grid {
   align-items: start;
   margin-bottom: 14px;
@@ -681,6 +703,10 @@ textarea {
   }
 
   .item-row {
+    grid-template-columns: 1fr;
+  }
+
+  .goal-row {
     grid-template-columns: 1fr;
   }
 

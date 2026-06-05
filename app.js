@@ -72,6 +72,7 @@ function defaultState() {
     teams,
     players: [],
     matches: [],
+    scorerRecords: [],
     transfers: [],
     financeAdjustments: [],
     actionLog: [
@@ -104,6 +105,7 @@ function normalizeState(data) {
   next.teams = Array.isArray(data.teams) && data.teams.length ? data.teams : base.teams;
   next.players = Array.isArray(data.players) ? data.players : [];
   next.matches = Array.isArray(data.matches) ? data.matches : [];
+  next.scorerRecords = Array.isArray(data.scorerRecords) ? data.scorerRecords : [];
   next.transfers = Array.isArray(data.transfers) ? data.transfers : [];
   next.financeAdjustments = Array.isArray(data.financeAdjustments) ? data.financeAdjustments : [];
   next.actionLog = Array.isArray(data.actionLog) ? data.actionLog : [];
@@ -819,7 +821,7 @@ function renderMatchAdmin() {
     <section class="panel admin-panel">
       <div class="section-title">
         <h2>录入比赛</h2>
-        <span class="hint">进球记录格式：球队名|球员名|数量，每行一条</span>
+        <span class="hint">进球改为选择球员，空行会自动忽略</span>
       </div>
       <form id="matchForm" class="form-grid">
         <div class="field">
@@ -883,7 +885,7 @@ function renderMatchAdmin() {
         </div>
         <div class="field full">
           <label>进球记录</label>
-          <textarea name="goalsText" placeholder="101fc|张三|2&#10;格调|李四|1"></textarea>
+          ${renderGoalInputRows()}
         </div>
         <div class="field full">
           <label>备注</label>
@@ -894,6 +896,28 @@ function renderMatchAdmin() {
         </div>
       </form>
     </section>
+  `;
+}
+
+function renderGoalInputRows() {
+  return `
+    <div class="goal-inputs">
+      <div class="goal-row goal-head">
+        <span>进球球员</span>
+        <span>数量</span>
+      </div>
+      ${Array.from({ length: 10 }, () => renderGoalInputRow()).join("")}
+    </div>
+    <div class="hint">每行选一名球员；同一名球员多球可以直接填数量。</div>
+  `;
+}
+
+function renderGoalInputRow() {
+  return `
+    <div class="goal-row">
+      <select name="goalPlayerId">${scorerPlayerOptions()}</select>
+      <input name="goalCount" type="number" min="1" step="1" placeholder="1" />
+    </div>
   `;
 }
 
@@ -1087,10 +1111,11 @@ function renderTransferList(transfers, showAll, limit) {
 
 function renderScorersView(stats) {
   return `
+    ${isAdmin() ? renderScorerRecordAdmin(stats.scorerRecords) : ""}
     <section class="panel">
       <div class="section-title">
         <h2>射手榜</h2>
-        <span class="hint">助攻榜已预留，后续可加入</span>
+        <span class="hint">比赛进球和手动补录都会计入，助攻榜已预留</span>
       </div>
       ${
         stats.scorers.length
@@ -1125,6 +1150,74 @@ function renderScorersView(stats) {
           : `<div class="empty">暂无进球记录。</div>`
       }
     </section>
+  `;
+}
+
+function renderScorerRecordAdmin(records) {
+  return `
+    <section class="panel admin-panel">
+      <div class="section-title">
+        <h2>手动补录射手记录</h2>
+        <span class="hint">用于补救漏录、特殊比赛或赛后更正</span>
+      </div>
+      <form id="scorerRecordForm" class="form-grid">
+        <div class="field">
+          <label>日期</label>
+          <input name="date" type="date" value="${today()}" />
+        </div>
+        <div class="field">
+          <label>球员</label>
+          <select name="playerId" required>${scorerPlayerOptions("", "请选择球员")}</select>
+        </div>
+        <div class="field">
+          <label>进球数</label>
+          <input name="count" type="number" min="1" step="1" value="1" required />
+        </div>
+        <div class="field">
+          <label>备注</label>
+          <input name="note" placeholder="例如：赛后补录、特殊比赛" />
+        </div>
+        <div class="field">
+          <button class="btn primary" type="submit">保存补录</button>
+        </div>
+      </form>
+      <div style="margin-top:14px">
+        ${renderScorerRecordList(records)}
+      </div>
+    </section>
+  `;
+}
+
+function renderScorerRecordList(records) {
+  if (!records.length) return `<div class="empty">暂无手动补录记录。</div>`;
+  return `
+    <div class="list-stack">
+      ${records
+        .map((record) => {
+          const player = getPlayer(record.playerId);
+          return `
+            <div class="item-row ${record.voided ? "voided" : ""}">
+              <div>
+                <div class="item-title">
+                  ${esc(player?.name || record.playerName || "未知球员")}
+                  <span class="tag ordinary">+${record.count || 0}球</span>
+                  ${record.voided ? `<span class="tag voided">已撤回</span>` : ""}
+                </div>
+                <div class="item-meta">
+                  ${esc(record.date || "未填日期")} · ${teamChip(getTeam(record.teamId || player?.teamId))}
+                  ${record.note ? ` · ${esc(record.note)}` : ""}
+                </div>
+              </div>
+              ${
+                !record.voided
+                  ? `<button class="btn small danger" data-action="void-scorer-record" data-id="${record.id}">撤回</button>`
+                  : ""
+              }
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
   `;
 }
 
@@ -1316,6 +1409,11 @@ function handleClick(event) {
     return;
   }
 
+  if (action === "void-scorer-record") {
+    voidScorerRecord(id);
+    return;
+  }
+
   if (action === "void-transfer") {
     voidTransfer(id);
     return;
@@ -1348,6 +1446,7 @@ async function handleSubmit(event) {
 
   if (form.id === "playerForm") savePlayer(form);
   if (form.id === "matchForm") saveMatch(form);
+  if (form.id === "scorerRecordForm") saveScorerRecord(form);
   if (form.id === "transferForm") saveTransfer(form);
   if (form.id === "financeForm") saveFinance(form);
   if (form.id === "teamSettingsForm") saveTeamSettings(form);
@@ -1498,7 +1597,7 @@ function saveMatch(form) {
     awayScore = awayScore ?? 0;
   }
 
-  const goals = parseGoals(String(data.get("goalsText") || ""));
+  const goals = parseMatchGoals(form);
   const match = {
     id: makeId("match"),
     seasonId: getActiveSeason().id,
@@ -1527,25 +1626,57 @@ function saveMatch(form) {
   toast("比赛已保存，积分、射手和财政已自动更新");
 }
 
-function parseGoals(text) {
-  return text
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const parts = line.split("|").map((part) => part.trim()).filter(Boolean);
-      const teamText = parts[0] || "";
-      const playerText = parts[1] || "";
-      const countText = parts[2] || "1";
-      const team = findTeamByName(teamText);
-      const player = findPlayerByName(playerText);
+function parseMatchGoals(form) {
+  const playerIds = Array.from(form.querySelectorAll('[name="goalPlayerId"]'));
+  const counts = Array.from(form.querySelectorAll('[name="goalCount"]'));
+  return playerIds
+    .map((input, index) => {
+      const player = getPlayer(input.value);
+      if (!player) return null;
       return {
-        teamId: team?.id || player?.teamId || "",
-        playerId: player?.id || "",
-        playerName: player?.name || playerText || "未知球员",
-        count: Math.max(1, numberOrZero(countText) || 1),
+        teamId: player.teamId || "",
+        playerId: player.id,
+        playerName: player.name,
+        count: Math.max(1, numberOrZero(counts[index]?.value) || 1),
       };
-    });
+    })
+    .filter(Boolean);
+}
+
+function saveScorerRecord(form) {
+  const data = new FormData(form);
+  const player = getPlayer(String(data.get("playerId") || ""));
+  if (!player) return toast("请选择球员");
+
+  const count = Math.max(1, numberOrZero(data.get("count")) || 1);
+  const record = {
+    id: makeId("scorer"),
+    seasonId: getActiveSeason().id,
+    createdAt: nowIso(),
+    voided: false,
+    date: String(data.get("date") || today()),
+    playerId: player.id,
+    playerName: player.name,
+    teamId: player.teamId || "",
+    count,
+    note: String(data.get("note") || "").trim(),
+  };
+
+  state.scorerRecords.push(record);
+  logAction("补录射手记录", player.name, `+${count}球 · ${record.note || "手动补录"}`);
+  saveState();
+  toast("射手记录已补录");
+}
+
+function voidScorerRecord(id) {
+  const record = state.scorerRecords.find((item) => item.id === id);
+  if (!record || record.voided) return;
+  if (!confirm("确认撤回这条手动射手补录？对应进球会从射手榜中移除。")) return;
+  record.voided = true;
+  record.voidedAt = nowIso();
+  logAction("撤回射手补录", record.playerName || "未知球员", `-${record.count || 0}球`);
+  saveState();
+  toast("射手补录已撤回");
 }
 
 function saveTransfer(form) {
@@ -2020,9 +2151,13 @@ function collectStats() {
     .filter((transfer) => transfer.seasonId === seasonId)
     .slice()
     .sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.createdAt.localeCompare(a.createdAt));
+  const scorerRecords = state.scorerRecords
+    .filter((record) => record.seasonId === seasonId)
+    .slice()
+    .sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.createdAt.localeCompare(a.createdAt));
 
   const standings = computeStandings(activeTeams, matches);
-  const scorers = computeScorers(matches);
+  const scorers = computeScorers(matches, scorerRecords);
   const { financeSummary, ledgerByTeam } = computeFinance(activeTeams, matches, transfers);
 
   return {
@@ -2034,6 +2169,7 @@ function collectStats() {
     recentMatches: matches.filter((match) => !match.voided),
     transfers,
     recentTransfers: transfers.filter((transfer) => !transfer.voided),
+    scorerRecords,
     standings,
     scorers,
     financeSummary,
@@ -2095,21 +2231,36 @@ function computeStandings(teams, matches) {
     .sort((a, b) => b.points - a.points || b.gd - a.gd || b.gf - a.gf || (a.team.order ?? 0) - (b.team.order ?? 0));
 }
 
-function computeScorers(matches) {
+function computeScorers(matches, scorerRecords = []) {
   const map = new Map();
+
+  const addGoal = (goal) => {
+    const key = goal.playerId || `${goal.teamId}-${goal.playerName}`;
+    const current = map.get(key) || {
+      playerId: goal.playerId,
+      name: goal.playerName,
+      teamId: goal.teamId,
+      goals: 0,
+    };
+    current.goals += Number(goal.count || 1);
+    map.set(key, current);
+  };
+
   for (const match of matches) {
     if (match.voided || !isPlayed(match)) continue;
     for (const goal of match.goals || []) {
-      const key = goal.playerId || `${goal.teamId}-${goal.playerName}`;
-      const current = map.get(key) || {
-        playerId: goal.playerId,
-        name: goal.playerName,
-        teamId: goal.teamId,
-        goals: 0,
-      };
-      current.goals += Number(goal.count || 1);
-      map.set(key, current);
+      addGoal(goal);
     }
+  }
+
+  for (const record of scorerRecords) {
+    if (record.voided) continue;
+    addGoal({
+      playerId: record.playerId,
+      playerName: record.playerName,
+      teamId: record.teamId,
+      count: record.count,
+    });
   }
 
   return [...map.values()]
@@ -2327,6 +2478,16 @@ function playerOptions(selected = "") {
   return players
     .map((player) => `<option value="${player.id}" ${player.id === selected ? "selected" : ""}>${esc(player.name)} · ${esc(teamName(player.teamId))}</option>`)
     .join("");
+}
+
+function scorerPlayerOptions(selected = "", emptyLabel = "不记录") {
+  const players = activePlayers().slice().sort((a, b) => teamName(a.teamId).localeCompare(teamName(b.teamId), "zh-CN") || playerSort(a, b));
+  return `
+    <option value="" ${selected ? "" : "selected"}>${esc(emptyLabel)}</option>
+    ${players
+      .map((player) => `<option value="${player.id}" ${player.id === selected ? "selected" : ""}>${esc(player.name)} · ${esc(teamName(player.teamId))}</option>`)
+      .join("")}
+  `;
 }
 
 function option(value, label, selected) {
