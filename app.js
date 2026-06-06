@@ -1,6 +1,7 @@
 const STORAGE_KEY = "oneZeroOneLeagueState.v2";
 const AUTH_KEY = "oneZeroOneLeagueAdmin.v2";
 const TAB_KEY = "oneZeroOneLeagueTab.v2";
+const VIEW_SESSION_KEY = "oneZeroOneLeagueViewCounted.v1";
 const DEFAULT_ADMIN_PASSWORD_HASH = "22b06d157c7eeb10c0d52ca2f297cf8ade84d9675bbc8199a1b284aa8113f772";
 const SUPABASE_URL = "https://wfezklbuehsldvxlylzv.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_w9baPO5oBw8_EVISvXSr9w_pdMTY1bl";
@@ -32,6 +33,14 @@ const remote = {
   lastSavedAt: "",
   saveTimer: null,
 };
+const siteMetrics = {
+  status: "connecting",
+  message: "正在读取浏览量",
+  totalViews: 0,
+  todayViews: 0,
+  todayDate: localDateKey(),
+  lastViewedAt: "",
+};
 const ui = {
   tab: localStorage.getItem(TAB_KEY) || "overview",
   editingPlayerId: null,
@@ -46,7 +55,7 @@ document.addEventListener("submit", handleSubmit);
 document.addEventListener("change", handleChange);
 
 render();
-hydrateRemoteState();
+hydrateRemoteState().finally(trackSiteVisit);
 
 function defaultState() {
   const teams = TEAM_PRESETS.map((team, index) => ({
@@ -109,6 +118,7 @@ function normalizeState(data) {
   next.transfers = Array.isArray(data.transfers) ? data.transfers : [];
   next.financeAdjustments = Array.isArray(data.financeAdjustments) ? data.financeAdjustments : [];
   next.actionLog = Array.isArray(data.actionLog) ? data.actionLog : [];
+  next.siteMetrics = normalizeSiteMetrics(data.siteMetrics || {});
   next.adminName = data.adminName || "rxnb";
   next.adminPasswordHash = data.adminPasswordHash || base.adminPasswordHash;
 
@@ -137,6 +147,21 @@ function normalizeState(data) {
   return next;
 }
 
+function normalizeSiteMetrics(data = {}) {
+  const source = data && typeof data === "object" ? data : {};
+  const raw = source.siteMetrics || source.metrics || source;
+  const todayDate = localDateKey();
+  const previousTodayDate = raw.todayDate || todayDate;
+  const isSameDay = previousTodayDate === todayDate;
+
+  return {
+    totalViews: Math.max(0, numberOrZero(raw.totalViews ?? raw.views)),
+    todayViews: isSameDay ? Math.max(0, numberOrZero(raw.todayViews)) : 0,
+    todayDate,
+    lastViewedAt: raw.lastViewedAt || "",
+  };
+}
+
 function saveState(options = {}) {
   const { syncRemote = true } = options;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -145,13 +170,7 @@ function saveState(options = {}) {
 
 async function hydrateRemoteState() {
   try {
-    const response = await fetch(`${REMOTE_STATE_ENDPOINT}?id=eq.main&select=data`, {
-      headers: supabaseHeaders(),
-    });
-    if (!response.ok) throw new Error(`读取失败：${response.status}`);
-
-    const rows = await response.json();
-    const remoteData = rows?.[0]?.data;
+    const remoteData = (await fetchMainStateRow())?.data;
     if (remoteData && Object.keys(remoteData).length) {
       replaceState(remoteData);
       saveState({ syncRemote: false });
@@ -168,6 +187,115 @@ async function hydrateRemoteState() {
     console.warn(error);
   }
   render();
+}
+
+async function trackSiteVisit() {
+  const shouldCountVisit = !hasSessionFlag(VIEW_SESSION_KEY);
+
+  try {
+    siteMetrics.status = "connecting";
+    siteMetrics.message = "正在读取浏览量";
+    const { latestState, metrics } = shouldCountVisit ? await countSiteVisitWithRetry() : await readLatestSiteMetrics();
+
+    replaceState({ ...latestState, siteMetrics: metrics });
+    saveState({ syncRemote: false });
+    if (shouldCountVisit) markSessionFlag(VIEW_SESSION_KEY);
+    Object.assign(siteMetrics, metrics, {
+      status: "connected",
+      message: shouldCountVisit ? "本次访问已计入浏览量" : "浏览量已读取",
+    });
+  } catch (error) {
+    siteMetrics.status = "error";
+    siteMetrics.message = "浏览量未连接";
+    console.warn(error);
+  }
+
+  render();
+}
+
+async function readLatestSiteMetrics() {
+  const row = await fetchMainStateRow();
+  const latestState = normalizeState(row?.data && Object.keys(row.data).length ? row.data : state);
+  return {
+    latestState,
+    metrics: normalizeSiteMetrics(latestState.siteMetrics || {}),
+  };
+}
+
+async function countSiteVisitWithRetry() {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const row = await fetchMainStateRow();
+    const latestState = normalizeState(row?.data && Object.keys(row.data).length ? row.data : state);
+    const metrics = normalizeSiteMetrics(latestState.siteMetrics || {});
+    const nextMetrics = {
+      ...metrics,
+      totalViews: metrics.totalViews + 1,
+      todayViews: metrics.todayViews + 1,
+      lastViewedAt: nowIso(),
+    };
+
+    latestState.siteMetrics = nextMetrics;
+    const saved = await saveMainStateDataIfUnchanged(latestState, row?.updatedAt);
+    if (saved) return { latestState, metrics: nextMetrics };
+  }
+
+  throw new Error("浏览量保存冲突，请刷新后重试");
+}
+
+async function fetchMainStateRow() {
+  const response = await fetch(`${REMOTE_STATE_ENDPOINT}?id=eq.main&select=data,updated_at`, {
+    headers: supabaseHeaders(),
+  });
+  if (!response.ok) throw new Error(`读取失败：${response.status}`);
+
+  const rows = await response.json();
+  const row = rows?.[0];
+  return row ? { data: row.data || null, updatedAt: row.updated_at || "" } : null;
+}
+
+async function fetchMainStateData() {
+  return (await fetchMainStateRow())?.data || null;
+}
+
+async function saveMainStateData(nextState) {
+  const response = await fetch(REMOTE_STATE_ENDPOINT, {
+    method: "POST",
+    headers: {
+      ...supabaseHeaders(),
+      "Content-Type": "application/json",
+      Prefer: "resolution=merge-duplicates,return=minimal",
+    },
+    body: JSON.stringify({
+      id: "main",
+      data: nextState,
+      updated_at: nowIso(),
+    }),
+  });
+  if (!response.ok) throw new Error(`保存失败：${response.status}`);
+}
+
+async function saveMainStateDataIfUnchanged(nextState, expectedUpdatedAt) {
+  if (!expectedUpdatedAt) {
+    await saveMainStateData(nextState);
+    return true;
+  }
+
+  const response = await fetch(`${REMOTE_STATE_ENDPOINT}?id=eq.main&updated_at=eq.${encodeURIComponent(expectedUpdatedAt)}&select=id`, {
+    method: "PATCH",
+    headers: {
+      ...supabaseHeaders(),
+      "Content-Type": "application/json",
+      Prefer: "return=representation",
+    },
+    body: JSON.stringify({
+      data: nextState,
+      updated_at: nowIso(),
+    }),
+  });
+  if (!response.ok) throw new Error(`保存失败：${response.status}`);
+
+  const rows = await response.json();
+  return Array.isArray(rows) && rows.length > 0;
 }
 
 function replaceState(nextState) {
@@ -187,20 +315,8 @@ function queueRemoteSave() {
 
 async function saveRemoteStateNow(shouldRender = true) {
   try {
-    const response = await fetch(REMOTE_STATE_ENDPOINT, {
-      method: "POST",
-      headers: {
-        ...supabaseHeaders(),
-        "Content-Type": "application/json",
-        Prefer: "resolution=merge-duplicates,return=minimal",
-      },
-      body: JSON.stringify({
-        id: "main",
-        data: state,
-        updated_at: nowIso(),
-      }),
-    });
-    if (!response.ok) throw new Error(`保存失败：${response.status}`);
+    const dataToSave = await stateWithPreservedSiteMetrics(state);
+    await saveMainStateData(dataToSave);
     remote.status = "connected";
     remote.lastSavedAt = nowIso();
     remote.message = "线上数据已同步";
@@ -210,6 +326,35 @@ async function saveRemoteStateNow(shouldRender = true) {
     console.warn(error);
   }
   if (shouldRender) render();
+}
+
+async function stateWithPreservedSiteMetrics(nextState) {
+  const snapshot = normalizeState(nextState);
+  try {
+    const remoteData = await fetchMainStateData();
+    const remoteMetrics = normalizeSiteMetrics(remoteData?.siteMetrics || {});
+    const localMetrics = normalizeSiteMetrics(snapshot.siteMetrics || siteMetrics);
+    snapshot.siteMetrics = mergeSiteMetrics(remoteMetrics, localMetrics);
+  } catch {
+    snapshot.siteMetrics = normalizeSiteMetrics(snapshot.siteMetrics || siteMetrics);
+  }
+  state.siteMetrics = snapshot.siteMetrics;
+  Object.assign(siteMetrics, snapshot.siteMetrics);
+  return snapshot;
+}
+
+function mergeSiteMetrics(remoteMetrics, localMetrics) {
+  const todayDate = localDateKey();
+  const remoteToday = remoteMetrics.todayDate === todayDate ? remoteMetrics.todayViews : 0;
+  const localToday = localMetrics.todayDate === todayDate ? localMetrics.todayViews : 0;
+  const lastViewedAt = [remoteMetrics.lastViewedAt, localMetrics.lastViewedAt].filter(Boolean).sort().pop() || "";
+
+  return {
+    totalViews: Math.max(remoteMetrics.totalViews, localMetrics.totalViews),
+    todayViews: Math.max(remoteToday, localToday),
+    todayDate,
+    lastViewedAt,
+  };
 }
 
 function supabaseHeaders() {
@@ -235,6 +380,7 @@ function render() {
           <div class="top-actions">
             <span class="mode-pill ${admin ? "admin" : ""}">${admin ? "管理员模式" : "公开展示模式"}</span>
             ${renderSyncPill()}
+            ${admin ? renderViewsPill() : ""}
             ${admin ? renderAdminTopActions() : renderLoginForm()}
           </div>
         </div>
@@ -264,11 +410,23 @@ function renderSyncPill() {
   return `<span class="mode-pill ${statusClass}" title="${escAttr(remote.message)}">${esc(syncStatusLabel())}</span>`;
 }
 
+function renderViewsPill() {
+  const statusClass = siteMetrics.status === "error" ? "warn" : siteMetrics.status === "connected" ? "info" : "";
+  const label = siteMetrics.status === "connected" ? `浏览量 ${formatInteger(siteMetrics.totalViews)}` : viewsStatusLabel();
+  return `<span class="mode-pill ${statusClass}" title="${escAttr(`${siteMetrics.message}；同一浏览器会话计一次访问`)}">${esc(label)}</span>`;
+}
+
 function syncStatusLabel() {
   if (remote.status === "connected") return "线上已同步";
   if (remote.status === "saving") return "线上保存中";
   if (remote.status === "error") return "线上未连接";
   return "线上连接中";
+}
+
+function viewsStatusLabel() {
+  if (siteMetrics.status === "connected") return `浏览量 ${formatInteger(siteMetrics.totalViews)}`;
+  if (siteMetrics.status === "error") return "浏览量未连接";
+  return "浏览量读取中";
 }
 
 function renderLoginForm() {
@@ -1250,6 +1408,7 @@ function renderAdminLocked() {
 function renderSeasonAdmin(stats) {
   return `
     <section class="grid cols-2">
+      ${renderSiteMetricsAdmin()}
       <div class="panel admin-panel">
         <div class="section-title">
           <h2>当前赛季</h2>
@@ -1326,6 +1485,34 @@ function renderSeasonAdmin(stats) {
         </div>
       </div>
     </section>
+  `;
+}
+
+function renderSiteMetricsAdmin() {
+  return `
+    <div class="panel admin-panel">
+      <div class="section-title">
+        <h2>浏览量统计</h2>
+        <span class="hint">${esc(viewsStatusLabel())}</span>
+      </div>
+      <div class="metric-strip">
+        <div class="metric-cell">
+          <div class="metric-label">总访问</div>
+          <div class="metric-value">${formatInteger(siteMetrics.totalViews)}</div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-label">今日访问</div>
+          <div class="metric-value">${formatInteger(siteMetrics.todayViews)}</div>
+        </div>
+        <div class="metric-cell">
+          <div class="metric-label">最近访问</div>
+          <div class="metric-value small">${siteMetrics.lastViewedAt ? esc(formatDateTime(siteMetrics.lastViewedAt)) : "暂无"}</div>
+        </div>
+      </div>
+      <div class="notice" style="margin-top:12px">
+        公开展示模式不会显示浏览量；同一浏览器会话只计入一次访问。
+      </div>
+    </div>
   `;
 }
 
@@ -2601,6 +2788,13 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function localDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -2617,6 +2811,26 @@ function formatDateTime(value) {
     }).format(new Date(value));
   } catch {
     return value;
+  }
+}
+
+function formatInteger(value) {
+  return new Intl.NumberFormat("zh-CN").format(numberOrZero(value));
+}
+
+function hasSessionFlag(key) {
+  try {
+    return sessionStorage.getItem(key) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function markSessionFlag(key) {
+  try {
+    sessionStorage.setItem(key, "true");
+  } catch {
+    // 浏览器禁用 sessionStorage 时，浏览量仍可继续展示。
   }
 }
 
