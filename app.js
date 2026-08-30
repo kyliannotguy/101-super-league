@@ -375,6 +375,7 @@ function render() {
         <div class="topbar-inner">
           <div class="brand-block">
             <h1>一零一超级联赛</h1>
+            <div class="league-subtitle">101 PREMIER LEAGUE</div>
             <div class="season-line">${esc(season.name)} · 开发者：任翔</div>
           </div>
           <div class="top-actions">
