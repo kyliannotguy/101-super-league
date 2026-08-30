@@ -15,8 +15,6 @@ const TEAM_PRESETS = [
   { id: "team-gediao", name: "格调", color: "#14a06f" },
   { id: "team-poi", name: "poi", color: "#8b5cf6" },
   { id: "team-chasing", name: "chasing", color: "#f08a24" },
-  { id: "team-shaonianhu", name: "少年湖", color: "#0f9f9a" },
-  { id: "team-ruifeng", name: "锐锋", color: "#d97706" },
 ];
 
 const ROSTER_IMPORT_COLUMNS = {
@@ -91,8 +89,8 @@ function defaultState() {
         id: makeId("log"),
         at: nowIso(),
         type: "系统初始化",
-        title: "创建七支初始球队",
-        detail: "101fc、101竞技、格调、poi、chasing、少年湖、锐锋",
+        title: "创建五支初始球队",
+        detail: "101fc、101竞技、格调、poi、chasing",
       },
     ],
   };
@@ -114,16 +112,6 @@ function normalizeState(data) {
   next.seasons = Array.isArray(data.seasons) && data.seasons.length ? data.seasons : base.seasons;
   next.activeSeasonId = data.activeSeasonId || next.seasons[0].id;
   next.teams = Array.isArray(data.teams) && data.teams.length ? data.teams : base.teams;
-  const existingTeamIds = new Set(next.teams.map((team) => team.id));
-  const nextTeamOrder = next.teams.reduce((max, team, index) => Math.max(max, Number(team.order) || index), -1) + 1;
-  TEAM_PRESETS.filter((team) => !existingTeamIds.has(team.id)).forEach((team, index) => {
-    next.teams.push({
-      ...team,
-      order: nextTeamOrder + index,
-      active: true,
-      initialFundsBySeason: Object.fromEntries(next.seasons.map((season) => [season.id, 900])),
-    });
-  });
   next.players = Array.isArray(data.players) ? data.players : [];
   next.matches = Array.isArray(data.matches) ? data.matches : [];
   next.scorerRecords = Array.isArray(data.scorerRecords) ? data.scorerRecords : [];
@@ -461,7 +449,6 @@ function renderTabs() {
   const tabs = [
     ["overview", "总览"],
     ["standings", "积分榜"],
-    ["cup", "杯赛"],
     ["finance", "财政"],
     ["teams", "球队球员"],
     ["matches", "比赛"],
@@ -487,7 +474,6 @@ function renderTabs() {
 
 function renderCurrentTab(stats) {
   if (ui.tab === "standings") return renderStandingsView(stats);
-  if (ui.tab === "cup") return renderCupView(stats);
   if (ui.tab === "finance") return renderFinanceView(stats);
   if (ui.tab === "teams") return renderTeamsView(stats);
   if (ui.tab === "matches") return renderMatchesView(stats);
@@ -495,59 +481,6 @@ function renderCurrentTab(stats) {
   if (ui.tab === "scorers") return renderScorersView(stats);
   if (ui.tab === "season") return renderSeasonView(stats);
   return renderOverview(stats);
-}
-
-function renderCupView(stats) {
-  const teams = stats.teams.slice().sort((a, b) => a.order - b.order);
-  const slots = Array.from({ length: 8 }, (_, index) => teams[index] || null);
-  slots[7] = null;
-
-  return `
-    <section class="panel cup-panel">
-      <div class="section-title">
-        <div>
-          <h2>杯赛晋级图</h2>
-          <div class="hint">${esc(getActiveSeason().name)} · 7队淘汰赛</div>
-        </div>
-        <span class="cup-status">待比赛</span>
-      </div>
-      <div class="cup-note">首轮设置一个轮空位，轮空球队直接进入半决赛。晋级队伍和比分后续可根据实际比赛更新。</div>
-      <div class="bracket" aria-label="杯赛晋级图">
-        <div class="bracket-round round-first">
-          <div class="round-label">首轮</div>
-          ${renderCupMatch(slots[0], slots[1], "1")}
-          ${renderCupMatch(slots[2], slots[3], "2")}
-          ${renderCupMatch(slots[4], slots[5], "3")}
-          ${renderCupMatch(slots[6], null, "轮空", true)}
-        </div>
-        <div class="bracket-round round-semi">
-          <div class="round-label">半决赛</div>
-          ${renderCupMatch(null, null, "1")}
-          ${renderCupMatch(null, null, "2")}
-        </div>
-        <div class="bracket-round round-final">
-          <div class="round-label">决赛</div>
-          ${renderCupMatch(null, null, "决赛")}
-          <div class="cup-champion">冠军<br /><span>待定</span></div>
-        </div>
-      </div>
-    </section>
-  `;
-}
-
-function renderCupMatch(homeTeam, awayTeam, label, bye = false) {
-  const teamRow = (team, placeholder = "待定") => {
-    if (!team) return `<div class="cup-team placeholder">${esc(placeholder)}</div>`;
-    return `<div class="cup-team"><span class="team-dot" style="background:${escAttr(team.color)}"></span>${esc(team.name)}</div>`;
-  };
-
-  return `
-    <div class="cup-match ${bye ? "bye-match" : ""}">
-      <div class="cup-match-label">${esc(label)}${bye ? " · 自动晋级" : ""}</div>
-      ${teamRow(homeTeam)}
-      ${bye ? `<div class="cup-team bye-result">直接进入半决赛</div>` : teamRow(awayTeam)}
-    </div>
-  `;
 }
 
 function renderOverview(stats) {
