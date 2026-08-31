@@ -546,6 +546,61 @@ function renderStandingsView(stats) {
       </div>
       ${renderStandingsTable(stats.standings)}
     </section>
+    ${renderCupBracket(stats)}
+  `;
+}
+
+function renderCupBracket(stats) {
+  const teamByName = new Map(stats.teams.map((team) => [team.name.toLowerCase(), team]));
+  const team = (name) => teamByName.get(name.toLowerCase()) || { name, color: "#a7b1c0" };
+  const semiFinals = [
+    [team("101fc"), team("chasing")],
+    [team("poi"), team("格调")],
+  ];
+
+  return `
+    <section class="panel cup-bracket-panel">
+      <div class="section-title">
+        <div>
+          <h2>杯赛晋级图</h2>
+          <div class="hint">${esc(getActiveSeason().name)} · 四强阶段</div>
+        </div>
+        <span class="cup-status">进行中</span>
+      </div>
+      <div class="cup-bracket" aria-label="杯赛四强晋级图">
+        <div class="cup-round cup-semifinals">
+          <div class="cup-round-title">半决赛</div>
+          ${semiFinals.map(([home, away], index) => renderCupBracketMatch(home, away, `半决赛 ${index + 1}`)).join("")}
+        </div>
+        <div class="cup-round cup-final-round">
+          <div class="cup-round-title">决赛</div>
+          ${renderCupBracketMatch(null, null, "决赛", "胜者 1", "胜者 2")}
+        </div>
+        <div class="cup-round cup-champion-round">
+          <div class="cup-round-title">冠军</div>
+          <div class="cup-champion-box">
+            <div class="cup-trophy">冠军</div>
+            <div class="cup-winner">待定</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderCupBracketMatch(homeTeam, awayTeam, label, homePlaceholder = "待定", awayPlaceholder = "待定") {
+  const renderTeam = (team, placeholder) =>
+    team
+      ? `<div class="cup-bracket-team"><span class="team-dot" style="background:${escAttr(team.color)}"></span>${esc(team.name)}</div>`
+      : `<div class="cup-bracket-team placeholder">${esc(placeholder)}</div>`;
+
+  return `
+    <div class="cup-bracket-match">
+      <div class="cup-match-label">${esc(label)}</div>
+      ${renderTeam(homeTeam, homePlaceholder)}
+      ${renderTeam(awayTeam, awayPlaceholder)}
+      <div class="cup-match-state">待赛</div>
+    </div>
   `;
 }
 
